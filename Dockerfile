@@ -1,24 +1,8 @@
-# Any copyright is dedicated to the Public Domain.
-# https://creativecommons.org/publicdomain/zero/1.0/
+FROM caddy:2.1.1-builder AS builder
 
-# == BUILD STAGE ==
-FROM golang:alpine as build
+RUN caddy-builder \
+    github.com/HeavenVolkoff/caddy-authelia/plugin
 
-RUN apk add git
+FROM caddy:2.1.1
 
-RUN go get -u github.com/caddyserver/xcaddy/cmd/xcaddy
-
-WORKDIR /src
-
-RUN CGO_ENABLED=0 GOARCH=amd64 GOOS=linux \
-        xcaddy build \
-        --output ./caddy \
-        --with github.com/lucaslorentz/caddy-docker-proxy@v2.1.0
-        --with github.com/HeavenVolkoff/caddy-authelia
-
-# == RUNTIME STAGE ==
-FROM gcr.io/distroless/static
-
-COPY --from=build /src/caddy /caddy
-
-ENTRYPOINT ["/caddy"]
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy

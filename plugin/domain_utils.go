@@ -4,13 +4,14 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-package authelia
+package plugin
 
 import (
 	"fmt"
-	"github.com/HeavenVolkoff/caddy-authelia/external/Go"
 	"strconv"
 	"strings"
+
+	"github.com/HeavenVolkoff/caddy-authelia/plugin/internalized/golang"
 )
 
 type DomainError struct {
@@ -35,7 +36,7 @@ func parsePortNum(s string) (uint16, error) {
 }
 
 func validateDomain(domain string) error {
-	if Go.IsDomainName(domain) {
+	if golang.IsDomainName(domain) {
 		return nil
 	}
 	return DomainError{Domain: domain}

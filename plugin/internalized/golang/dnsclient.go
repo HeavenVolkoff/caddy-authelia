@@ -3,7 +3,7 @@
 // Copyright (c) 2009 The Go Authors. All rights reserved.
 // Licensed under BSD-3-Clause with a patent grant, see ./LICENSE and ./PATENTS for more information.
 
-package Go
+package golang
 
 // isDomainName checks if a string is a presentation-format domain name
 // (currently restricted to hostname-compatible "preferred name" LDH labels and

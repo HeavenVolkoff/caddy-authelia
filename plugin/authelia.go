@@ -4,11 +4,10 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-package authelia
+package plugin
 
 import (
 	"fmt"
-	"github.com/HeavenVolkoff/caddy-authelia/external/Traefik"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -16,20 +15,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/HeavenVolkoff/caddy-authelia/plugin/headers"
+	"github.com/HeavenVolkoff/caddy-authelia/plugin/internalized/traefik"
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"github.com/vulcand/oxy/forward"
-	"github.com/vulcand/oxy/utils"
 
 	"go.uber.org/zap"
 )
 
 const (
-	remoteUserHeader   = "Remote-User"
 	autheliaVerifyPath = "/api/verify"
-	remoteGroupsHeader = "Remote-Groups"
 )
 
 func init() {
@@ -37,10 +34,16 @@ func init() {
 	httpcaddyfile.RegisterHandlerDirective("authelia", parseCaddyfile)
 }
 
+// Authelia implements a plugin for securing routes with authentication
 type Authelia struct {
-	TLS    bool   `json:"tls,omitempty"`
-	Port   uint16 `json:"port,omitempty"`
+	// If true, the connection to the authelia backend will use TLS
+	TLS bool `json:"tls,omitempty"`
+	// Port which the authelia backend is exposed
+	Port uint16 `json:"port,omitempty"`
+	// Host where the authelia backend can be reached
 	Domain string `json:"domain,omitempty"`
+	// URL to redirect unauthorized requests (Optional)
+	RedirectURL string `json:"redirect_url,omitempty"`
 
 	client http.Client
 	logger *zap.Logger
@@ -61,7 +64,19 @@ func (Authelia) CaddyModule() caddy.ModuleInfo {
 }
 
 func (a Authelia) Validate() error {
-	return validateDomain(a.Domain)
+	err := validateDomain(a.Domain)
+	if err != nil {
+		return err
+	}
+
+	if a.RedirectURL != "" {
+		_, err = url.Parse(a.RedirectURL)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (a *Authelia) Provision(ctx caddy.Context) error {
@@ -85,11 +100,12 @@ func (a *Authelia) Provision(ctx caddy.Context) error {
 
 // Caddyfile Syntax:
 //
-//     authelia [<matcher>] <domain>:<port> [<port>] {
-//         tls
-//         port <uint16>
-//         domain <string>
-//     }
+//	authelia [<matcher>] <domain>:<port> [<port>] {
+//		tls
+//		port 		 <uint16>
+//		domain 		 <string>
+//  	redirect_url <string>
+//	}
 func (a *Authelia) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 	for d.Next() {
 		args := d.RemainingArgs()
@@ -138,6 +154,13 @@ func (a *Authelia) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 				if !d.AllArgs(&a.Domain) {
 					return d.ArgErr()
 				}
+			case "redirect_url":
+				if a.RedirectURL != "" {
+					return d.Err("redirect_url already specified")
+				}
+				if !d.AllArgs(&a.RedirectURL) {
+					return d.ArgErr()
+				}
 			}
 		}
 	}
@@ -158,9 +181,13 @@ func (a Authelia) ServeHTTP(writer http.ResponseWriter, request *http.Request, n
 	}
 
 	autheliaUrl := url.URL{
-		Host:   fmt.Sprintf("%s:%d", a.Domain, a.Port),
 		Path:   autheliaVerifyPath,
+		Host:   fmt.Sprintf("%s:%d", a.Domain, a.Port),
 		Scheme: scheme,
+	}
+
+	if a.RedirectURL != "" {
+		autheliaUrl.RawQuery = url.Values{"rd": []string{a.RedirectURL}}.Encode()
 	}
 
 	forwardRequest, err := http.NewRequest(http.MethodGet, autheliaUrl.String(), nil)
@@ -168,7 +195,7 @@ func (a Authelia) ServeHTTP(writer http.ResponseWriter, request *http.Request, n
 		return err
 	}
 
-	Traefik.AssignForwardHeaders(request, forwardRequest)
+	traefik.AssignForwardHeaders(request, forwardRequest)
 
 	forwardResponse, err := a.client.Do(forwardRequest)
 	if err != nil {
@@ -194,18 +221,18 @@ func (a Authelia) ServeHTTP(writer http.ResponseWriter, request *http.Request, n
 
 	if forwardResponse.StatusCode < http.StatusOK || forwardResponse.StatusCode >= http.StatusMultipleChoices {
 		responseHeaders := http.Header{}
-		utils.CopyHeaders(responseHeaders, forwardResponse.Header)
-		utils.RemoveHeaders(responseHeaders, forward.HopHeaders...)
+		headers.CopyHeadersWithoutHop(responseHeaders, forwardResponse.Header)
 
 		return caddyhttp.StaticResponse{
 			Body:       string(body),
+			Close:      true,
 			Headers:    responseHeaders,
 			StatusCode: caddyhttp.WeakString(strconv.Itoa(forwardResponse.StatusCode)),
 		}.ServeHTTP(writer, request, nextHandler)
 	}
 
-	remoteUser := forwardResponse.Header.Get(remoteUserHeader)
-	remoteGroups := forwardResponse.Header.Get(remoteGroupsHeader)
+	remoteUser := forwardResponse.Header.Get(headers.RemoteUserHeader)
+	remoteGroups := forwardResponse.Header.Get(headers.RemoteGroupsHeader)
 	if remoteUser == "" || remoteGroups == "" {
 		return caddyhttp.Error(
 			http.StatusInternalServerError,
