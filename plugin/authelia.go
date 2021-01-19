@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/HeavenVolkoff/caddy-authelia/plugin/headers"
@@ -36,12 +35,8 @@ func init() {
 
 // Authelia implements a plugin for securing routes with authentication
 type Authelia struct {
-	// If true, the connection to the authelia backend will use TLS
-	TLS bool `json:"tls,omitempty"`
-	// Port which the authelia backend is exposed
-	Port uint16 `json:"port,omitempty"`
 	// Host where the authelia backend can be reached
-	Domain string `json:"domain,omitempty"`
+	AutheliaURL *url.URL `json:"authelia_url,omitempty"`
 	// URL to redirect unauthorized requests (Optional)
 	RedirectURL string `json:"redirect_url,omitempty"`
 
@@ -64,13 +59,12 @@ func (Authelia) CaddyModule() caddy.ModuleInfo {
 }
 
 func (a Authelia) Validate() error {
-	err := validateDomain(a.Domain)
-	if err != nil {
-		return err
+	if a.AutheliaURL == nil {
+		return fmt.Errorf("missing required authelia_url")
 	}
 
 	if a.RedirectURL != "" {
-		_, err = url.Parse(a.RedirectURL)
+		_, err := url.Parse(a.RedirectURL)
 		if err != nil {
 			return err
 		}
@@ -82,11 +76,6 @@ func (a Authelia) Validate() error {
 func (a *Authelia) Provision(ctx caddy.Context) error {
 	a.logger = ctx.Logger(a)
 	a.logger.Info("Provisioning Authelia plugin instance")
-
-	if a.Port == 0 {
-		// Authelia default port
-		a.Port = 9091
-	}
 
 	a.client = http.Client{
 		CheckRedirect: func(r *http.Request, via []*http.Request) error {
@@ -100,60 +89,28 @@ func (a *Authelia) Provision(ctx caddy.Context) error {
 
 // Caddyfile Syntax:
 //
-//	authelia [<matcher>] <domain>:<port> [<port>] {
-//		tls
-//		port 		 <uint16>
-//		domain 		 <string>
-//  	redirect_url <string>
+//	authelia [<matcher>] authelia_url {
+//    redirect_url <string>
 //	}
 func (a *Authelia) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 	for d.Next() {
 		args := d.RemainingArgs()
 		switch len(args) {
 		case 1:
-			a.Domain, a.Port, err = splitDomainPort(args[0])
+			a.AutheliaURL, err = url.Parse(args[0])
 			if err != nil {
 				return err
 			}
-		case 2:
-			a.Domain = args[0]
-			if strings.Contains(a.Domain, ":") {
-				return d.Err("port should only be defined once")
+			if a.AutheliaURL.Scheme == "" {
+				a.AutheliaURL.Scheme = "http"
 			}
-
-			a.Port, err = parsePortNum(args[1])
-			if err != nil {
-				return err
-			}
+		
 		default:
 			return d.ArgErr()
 		}
 
-		var portArg = ""
 		for d.NextBlock(0) {
 			switch d.Val() {
-			case "tls":
-				if a.TLS {
-					return d.Err("tls already specified")
-				}
-				a.TLS = true
-			case "port":
-				if portArg != "" {
-					return d.Err("port already specified")
-				}
-
-				if !d.AllArgs(&portArg) {
-					return d.ArgErr()
-				}
-
-				a.Port, err = parsePortNum(portArg)
-			case "domain":
-				if a.Domain != "" {
-					return d.Err("domain already specified")
-				}
-				if !d.AllArgs(&a.Domain) {
-					return d.ArgErr()
-				}
 			case "redirect_url":
 				if a.RedirectURL != "" {
 					return d.Err("redirect_url already specified")
@@ -175,22 +132,16 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 }
 
 func (a Authelia) ServeHTTP(writer http.ResponseWriter, request *http.Request, nextHandler caddyhttp.Handler) (err error) {
-	scheme := "http"
-	if a.TLS {
-		scheme = "https"
-	}
-
-	autheliaUrl := url.URL{
-		Path:   autheliaVerifyPath,
-		Host:   fmt.Sprintf("%s:%d", a.Domain, a.Port),
-		Scheme: scheme,
-	}
+	autheliaURL := *a.AutheliaURL
+	autheliaURL.Path += autheliaVerifyPath
 
 	if a.RedirectURL != "" {
-		autheliaUrl.RawQuery = url.Values{"rd": []string{a.RedirectURL}}.Encode()
+		q := autheliaURL.Query()
+		q.Set("rd", a.RedirectURL)
+		autheliaURL.RawQuery = q.Encode()
 	}
 
-	forwardRequest, err := http.NewRequest(http.MethodGet, autheliaUrl.String(), nil)
+	forwardRequest, err := http.NewRequest(http.MethodGet, autheliaURL.String(), nil)
 	if err != nil {
 		return err
 	}
