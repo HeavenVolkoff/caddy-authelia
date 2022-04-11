@@ -22,6 +22,8 @@ const (
 	RemoteUserHeader   = "Remote-User"
 	XForwardedMethod   = "X-Forwarded-Method"
 	RemoteGroupsHeader = "Remote-Groups"
+	RemoteEmailHeader  = "Remote-Email"
+	RemoteNameHeader   = "Remote-Name"
 )
 
 func CopyHeadersWithoutHop(dst http.Header, src http.Header) {
