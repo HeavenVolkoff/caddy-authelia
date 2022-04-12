@@ -184,6 +184,8 @@ func (a Authelia) ServeHTTP(writer http.ResponseWriter, request *http.Request, n
 
 	remoteUser := forwardResponse.Header.Get(headers.RemoteUserHeader)
 	remoteGroups := forwardResponse.Header.Get(headers.RemoteGroupsHeader)
+	remoteEmail := forwardResponse.Header.Get(headers.RemoteEmailHeader)
+	remoteName := forwardResponse.Header.Get(headers.RemoteNameHeader)
 	if remoteUser == "" || remoteGroups == "" {
 		return caddyhttp.Error(
 			http.StatusInternalServerError,
@@ -196,6 +198,8 @@ func (a Authelia) ServeHTTP(writer http.ResponseWriter, request *http.Request, n
 	repl := request.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
 	repl.Set("http.auth.user.id", remoteUser)
 	repl.Set("http.auth.user.groups", remoteGroups)
+	repl.Set("http.auth.user.email", remoteEmail)
+	repl.Set("http.auth.user.name", remoteName)
 
 	return nextHandler.ServeHTTP(writer, request)
 }

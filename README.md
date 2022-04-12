@@ -24,6 +24,8 @@ whoami.example.com {
         }
         request_header Remote-User {http.auth.user.id}
         request_header Remote-Groups {http.auth.user.groups}
+        request_header Remote-Email {http.auth.user.email}
+        request_header Remote-Name {http.auth.user.name}
         reverse_proxy http://whoami
     }
 }
