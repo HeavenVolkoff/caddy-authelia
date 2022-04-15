@@ -104,7 +104,7 @@ func (a *Authelia) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 			if a.AutheliaURL.Scheme == "" {
 				a.AutheliaURL.Scheme = "http"
 			}
-		
+
 		default:
 			return d.ArgErr()
 		}
@@ -182,11 +182,17 @@ func (a Authelia) ServeHTTP(writer http.ResponseWriter, request *http.Request, n
 		}.ServeHTTP(writer, request, nextHandler)
 	}
 
+	hasRemoteUser := len(forwardResponse.Header.Values(headers.RemoteUserHeader)) > 0
+	hasRemoteGroups := len(forwardResponse.Header.Values(headers.RemoteGroupsHeader)) > 0
+	hasRemoteEmail := len(forwardResponse.Header.Values(headers.RemoteEmailHeader)) > 0
+	hasRemoteName := len(forwardResponse.Header.Values(headers.RemoteNameHeader)) > 0
+
 	remoteUser := forwardResponse.Header.Get(headers.RemoteUserHeader)
 	remoteGroups := forwardResponse.Header.Get(headers.RemoteGroupsHeader)
 	remoteEmail := forwardResponse.Header.Get(headers.RemoteEmailHeader)
 	remoteName := forwardResponse.Header.Get(headers.RemoteNameHeader)
-	if remoteUser == "" || remoteGroups == "" {
+
+	if (hasRemoteUser && remoteUser == "") || (hasRemoteGroups && remoteGroups == "") || (hasRemoteEmail && remoteEmail == "") || (hasRemoteName && remoteName == "") {
 		return caddyhttp.Error(
 			http.StatusInternalServerError,
 			fmt.Errorf("authelia failed to return a valid user"),
@@ -196,10 +202,19 @@ func (a Authelia) ServeHTTP(writer http.ResponseWriter, request *http.Request, n
 	// Setup authentication success the same way as CaddyAuth's API
 	// https://github.com/caddyserver/caddy/blob/829e36d535cf5bbff7cf0f510608e6fca956cec4/modules/caddyhttp/caddyauth/caddyauth.go#L81-L85
 	repl := request.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
-	repl.Set("http.auth.user.id", remoteUser)
-	repl.Set("http.auth.user.groups", remoteGroups)
-	repl.Set("http.auth.user.email", remoteEmail)
-	repl.Set("http.auth.user.name", remoteName)
+
+	if remoteUser != "" {
+		repl.Set("http.auth.user.id", remoteUser)
+	}
+	if remoteGroups != "" {
+		repl.Set("http.auth.user.groups", remoteGroups)
+	}
+	if remoteEmail != "" {
+		repl.Set("http.auth.user.email", remoteEmail)
+	}
+	if remoteName != "" {
+		repl.Set("http.auth.user.name", remoteName)
+	}
 
 	return nextHandler.ServeHTTP(writer, request)
 }
