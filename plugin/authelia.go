@@ -182,17 +182,12 @@ func (a Authelia) ServeHTTP(writer http.ResponseWriter, request *http.Request, n
 		}.ServeHTTP(writer, request, nextHandler)
 	}
 
-	hasRemoteUser := len(forwardResponse.Header.Values(headers.RemoteUserHeader)) > 0
-	hasRemoteGroups := len(forwardResponse.Header.Values(headers.RemoteGroupsHeader)) > 0
-	hasRemoteEmail := len(forwardResponse.Header.Values(headers.RemoteEmailHeader)) > 0
-	hasRemoteName := len(forwardResponse.Header.Values(headers.RemoteNameHeader)) > 0
-
 	remoteUser := forwardResponse.Header.Get(headers.RemoteUserHeader)
 	remoteGroups := forwardResponse.Header.Get(headers.RemoteGroupsHeader)
 	remoteEmail := forwardResponse.Header.Get(headers.RemoteEmailHeader)
 	remoteName := forwardResponse.Header.Get(headers.RemoteNameHeader)
 
-	if (hasRemoteUser && remoteUser == "") || (hasRemoteGroups && remoteGroups == "") || (hasRemoteEmail && remoteEmail == "") || (hasRemoteName && remoteName == "") {
+	if remoteUser == "" {
 		return caddyhttp.Error(
 			http.StatusInternalServerError,
 			fmt.Errorf("authelia failed to return a valid user"),
@@ -203,9 +198,7 @@ func (a Authelia) ServeHTTP(writer http.ResponseWriter, request *http.Request, n
 	// https://github.com/caddyserver/caddy/blob/829e36d535cf5bbff7cf0f510608e6fca956cec4/modules/caddyhttp/caddyauth/caddyauth.go#L81-L85
 	repl := request.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
 
-	if remoteUser != "" {
-		repl.Set("http.auth.user.id", remoteUser)
-	}
+  repl.Set("http.auth.user.id", remoteUser)
 	if remoteGroups != "" {
 		repl.Set("http.auth.user.groups", remoteGroups)
 	}
